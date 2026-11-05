@@ -1,0 +1,96 @@
+---
+page_title: "Migrating from aws_route53_record"
+subcategory: ""
+description: |-
+  Move existing aws_route53_record resources under dns-gate without touching DNS.
+---
+
+# Migrating from aws_route53_record
+
+A stack that manages Route53 records with `aws_route53_record` can hand them over to the gate record by
+record, without any DNS change: the gate then audits every change and knows which team owns which record.
+The hosted zone itself (`aws_route53_zone`) stays where it is; only the records move.
+
+## 1. Serve the zone through the gate
+
+The gate administrators add the hosted zone to the gate configuration (Route53 provider). Its RRsets appear in
+the gate inventory as *foreign*: they exist, nobody owns them. Check with:
+
+```hcl
+data "dnsgate_record_sets" "foreign" {
+  zone   = "example.com"
+  status = "foreign"
+}
+```
+
+## 2. Adopt the RRsets for the team
+
+In the gate UI (zone page) or with `POST /api/v1/zones/{zone}/adopt/preview` then `/adopt`, adopt the RRsets
+the stack manages for the team of its pipeline. Adoption is all-or-nothing and requires a comment; it is
+audited. From then on only that team can change them.
+
+## 3. Replace the resources
+
+The gate generates the configuration of the team's RRsets, with `import` blocks:
+
+```shell
+curl -H "Authorization: Bearer $TOKEN" \
+  "https://dns-gate.example.com/api/v1/zones/example.com/terraform?team=web"
+```
+
+For each `aws_route53_record`, replace the resource with the generated `dnsgate_record_set` (or write it by
+hand), and add a `removed` block so that Terraform forgets the old resource **without destroying it**:
+
+```hcl
+removed {
+  from = aws_route53_record.www
+  lifecycle {
+    destroy = false
+  }
+}
+
+import {
+  to = dnsgate_record_set.www
+  id = "example.com/www/CNAME"
+}
+
+resource "dnsgate_record_set" "www" {
+  zone   = "example.com"
+  name   = "www"
+  type   = "CNAME"
+  ttl    = 300
+  values = ["front.example.net"]
+}
+```
+
+`removed` blocks need Terraform or OpenTofu 1.7 or later. Mapping from `aws_route53_record`:
+
+| aws_route53_record | dnsgate_record_set |
+|---|---|
+| `zone_id` | `zone` (the zone name) |
+| `name = "www.example.com"` | `name = "www"`, `@` for the apex (fully qualified names are refused at plan time) |
+| `type`, `ttl` | `type`, `ttl` |
+| `records` | `values`, kept as written: target names with or without trailing dot, TXT values unquoted, `\"\"` splits of long TXT values are understood |
+| `alias { name, zone_id, evaluate_target_health }` | the same `alias` block, no `ttl` |
+| `set_identifier`, routing policies, health checks | not supported: such RRsets are read-only in the gate |
+
+## 4. Plan
+
+The first plan must show only imports and removals, and no change:
+
+```text
+  # aws_route53_record.www will no longer be managed by Terraform
+  # dnsgate_record_set.www will be imported
+Plan: 1 to import, 0 to add, 0 to change, 0 to destroy.
+```
+
+A change in this plan means that the configuration differs from what the gate holds: fix the configuration
+(the values are compared by meaning, see the *Value comparison* section of `dnsgate_record_set`), not the
+records. An import refused with *Record set not adopted* means step 2 was skipped for that RRset; *owned by
+another team* means it was adopted for another team.
+
+Apply, then remove the `import` and `removed` blocks.
+
+## Complete example
+
+{{ tffile "examples/migration-route53/main.tf" }}

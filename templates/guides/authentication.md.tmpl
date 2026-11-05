@@ -1,0 +1,60 @@
+---
+page_title: "Authenticating to dns-gate"
+subcategory: ""
+description: |-
+  Choose how Terraform proves its identity to a dns-gate.
+---
+
+# Authenticating to dns-gate
+
+Terraform never holds the DNS provider credentials: it sends a bearer token that the gate verifies (issuer,
+audience, claims) and maps to roles and owner teams. `auth` takes exactly one method, plus optionally one CI
+method (`azure_devops` or `github_actions`) that is used inside its CI system only, so the same configuration
+runs in the pipeline and on a workstation.
+
+| Method | Token | Typical use |
+|--------|-------|-------------|
+| `aws_web_identity` | JWT signed by AWS STS (`sts:GetWebIdentityToken`) for the current IAM principal | CI with an AWS role, EKS Pod Identity, CodeBuild |
+| `azure_identity` | Microsoft Entra ID access token for the gate application | Azure DevOps (`AzureCLI@2`), AKS workload identity, managed identity, Azure CLI login |
+| `azure_devops` | OIDC token Azure DevOps issues for a service connection | Azure DevOps jobs, without any cloud login |
+| `github_actions` | OIDC token of the GitHub Actions job, with the gate's audience | GitHub Actions with `permissions: id-token: write` |
+| `token_file` | File re-read on expiry | Projected Kubernetes service account tokens, GitLab `id_tokens` written to a file |
+| `token_command` | stdout of a command, run again on expiry | Any other OIDC helper |
+| `token` | Static value | Gate virtual keys, tests |
+
+Without an `auth` block, `DNSGATE_TOKEN` (a token) or `DNSGATE_TOKEN_FILE` (a file) is used; the endpoint
+comes from `endpoint` or `DNSGATE_ENDPOINT`. Tokens are cached and renewed two minutes before they expire.
+
+## AWS
+
+{{ tffile "examples/provider/provider.tf" }}
+
+The IAM principal needs `sts:GetWebIdentityToken`, and the account must have IAM outbound identity
+federation enabled. The gate trusts the account's issuer with the audience given here.
+
+## Microsoft Entra ID
+
+`azure_identity` tries, in order: environment credentials, AKS workload identity, managed identity, then the
+Azure CLI login. With `client_id`, the chain is bound to that user-assigned identity.
+
+{{ tffile "examples/provider/provider-azure.tf" }}
+
+## Azure DevOps OIDC
+
+`azure_devops` requests the token Azure DevOps issues for a service connection (issuer
+`https://vstoken.dev.azure.com/<organization id>`, subject `sc://<organization>/<project>/<service connection>`).
+The service connection id is `service_connection_id` or `DNSGATE_ADO_SERVICE_CONNECTION_ID`; the job must map
+`SYSTEM_ACCESSTOKEN` into the step environment.
+
+{{ tffile "examples/provider/provider-azure-devops.tf" }}
+
+{{ codefile "yaml" "examples/ci/azure-pipelines.yml" }}
+
+The audience of these tokens (`api://AzureADTokenExchange`) is shared by every service connection of the
+organization: the gate must bind its issuer to the subjects of service connections dedicated to the gate.
+
+## GitHub Actions
+
+{{ tffile "examples/provider/provider-github-actions.tf" }}
+
+{{ codefile "yaml" "examples/ci/github-actions.yml" }}

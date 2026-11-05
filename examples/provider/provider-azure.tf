@@ -1,0 +1,13 @@
+# A Microsoft Entra ID token for the gate application: environment
+# credentials, AKS workload identity, managed identity, then the Azure CLI.
+provider "dnsgate" {
+  endpoint = "https://dns-gate.example.com"
+
+  auth {
+    azure_identity {
+      scope = "api://dns-gate/.default"
+      # tenant_id = "00000000-0000-0000-0000-000000000000"
+      # client_id = "11111111-1111-1111-1111-111111111111" # user-assigned managed identity
+    }
+  }
+}

@@ -1,0 +1,63 @@
+---
+page_title: "{{.Name}} {{.Type}} - {{.ProviderName}}"
+subcategory: ""
+description: |-
+{{ .Description | plainmarkdown | trimspace | prefixlines "  " }}
+---
+
+# {{.Name}} ({{.Type}})
+
+{{ .Description | trimspace }}
+
+## Example Usage
+
+{{ tffile "examples/resources/dnsgate_record_set/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Value comparison
+
+The gate, or the DNS provider behind it, may store a value in another form than the configuration: Route53
+returns names with a trailing dot and TXT values quoted and split in 255-byte strings, EuroDNS keeps them as
+sent. To avoid perpetual diffs, the provider compares values by meaning, using the zone file parser of
+[miekg/dns](https://github.com/miekg/dns) (the gate's Route53 adapter canonicalizes values with the same
+library). Each value is parsed as the record `x.invalid. 300 IN <type> <value>` with `.` as origin, then:
+
+| Record data | Compared as |
+|---|---|
+| Domain names inside the value (CNAME, NS, PTR targets, MX exchange, SRV target, SVCB/HTTPS target...) | absolute names, case-insensitive: `Target.Example.net` = `target.example.net.` |
+| TXT, SPF | the concatenation of the character-strings: quotes and chunking are ignored, escapes decoded. An unquoted value is one string, as with the AWS provider, so `a""b` reads as the strings `a` and `b` |
+| IP addresses, numbers, CAA, other fields | parsed values: `2001:DB8::1` = `2001:db8:0:0:0:0:0:1`, `0 issue letsencrypt.org` = `0 issue "letsencrypt.org"` |
+| A value that does not parse, or a type the parser does not know | the exact string |
+| Alias `name` | case-insensitive, trailing dot optional; `zone_id` case-insensitive |
+
+The comparison is deliberately conservative: TTLs, the number of values, letter case of TXT data and every
+field other than domain names are compared exactly. When the configuration and the gate hold the same
+records, the plan keeps the stored form and shows no change, including right after an import. A value the
+parser does not understand produces a plan-time warning: it is then compared as an exact string, so write it
+in the form the gate stores (the `dnsgate_record_sets` data source or the gate's Terraform export show it).
+
+Names inside values are absolute whether or not they end with a dot. Through a gate, a CNAME target written
+`target.example.net` means `target.example.net.`, never `target.example.net.<zone>`.
+
+## Ownership
+
+The RRset is owned by the team of the provider identity in the gate (`owner`). The gate refuses writes from
+other teams (`403 not_owner`), on RRsets created outside the gate (`409 foreign_rrset`) and on RRsets modified
+outside the gate (`409 tainted`, `status = "tainted"`) until an administrator reviews them. A plan shows a
+warning for tainted or foreign RRsets.
+
+## Import
+
+In Terraform 1.5 and later, use an `import` block with the id `<zone>/<name>/<type>`:
+
+{{ tffile "examples/resources/dnsgate_record_set/import-block.tf" }}
+
+or the command:
+
+{{ codefile "shell" "examples/resources/dnsgate_record_set/import.sh" }}
+
+Only RRsets owned by the team of the provider identity can be imported. An RRset created outside the gate is
+*foreign*: adopt it for the team in the gate first (web UI, or `POST /api/v1/zones/{zone}/adopt`). The gate
+generates the configuration and the import blocks of a team's RRsets with
+`GET /api/v1/zones/{zone}/terraform?team=<team>`.

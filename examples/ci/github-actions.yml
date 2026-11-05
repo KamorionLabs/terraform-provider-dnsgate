@@ -1,0 +1,17 @@
+# GitHub Actions: the job may request an OIDC token (id-token: write); the
+# github_actions method of the provider asks for one with the gate's audience.
+name: dns
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform init -input=false && terraform apply -input=false -auto-approve
+        working-directory: dns
