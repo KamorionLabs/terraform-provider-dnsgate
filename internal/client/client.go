@@ -113,7 +113,7 @@ func retryable(status int, reason string) bool {
 	switch {
 	case status == http.StatusLocked, status == http.StatusTooManyRequests:
 		return true
-	case status == http.StatusConflict && reason == ReasonPolicyBusy:
+	case status == http.StatusConflict && reason == ReasonPolicyBusy, reason == ReasonStoreUnavailable:
 		return true
 	case status >= 500 && status != http.StatusNotImplemented && status != http.StatusHTTPVersionNotSupported:
 		return true

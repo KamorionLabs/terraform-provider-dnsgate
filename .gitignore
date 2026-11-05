@@ -1,0 +1,6 @@
+/terraform-provider-dnsgate
+/dist/
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl

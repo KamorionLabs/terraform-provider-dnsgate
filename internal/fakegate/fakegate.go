@@ -32,7 +32,7 @@ type Options struct {
 	Token string
 	// Teams of the caller; the first one owns the RRsets it creates.
 	Teams []string
-	// Features of the discovery document. Default: policy-delegation.
+	// Features of the discovery document. Default: policy-delegation, rrset-api.
 	Features []string
 	// OldGate answers 404 not_found "unknown API endpoint" on per-RRset
 	// routes, like a gate without the RRset API.
@@ -74,7 +74,7 @@ type Server struct {
 // New starts a fake gate.
 func New(o Options) *Server {
 	if o.Features == nil {
-		o.Features = []string{client.FeaturePolicyDelegation}
+		o.Features = []string{client.FeaturePolicyDelegation, "rrset-api"}
 	}
 	if len(o.Teams) == 0 {
 		o.Teams = []string{"team-a"}
@@ -303,7 +303,9 @@ func (s *swallow) Write(b []byte) (int, error) {
 	}
 	return len(b), nil
 }
-func (s *swallow) flush() { Error(s.ResponseWriter, s.fault.Status, s.fault.Reason, "injected fault after write") }
+func (s *swallow) flush() {
+	Error(s.ResponseWriter, s.fault.Status, s.fault.Reason, "injected fault after write")
+}
 
 func (s *Server) listZones(w http.ResponseWriter) {
 	names := make([]string, 0, len(s.zones))

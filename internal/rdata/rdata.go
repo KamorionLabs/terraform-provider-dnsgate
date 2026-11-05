@@ -112,3 +112,9 @@ outer:
 func NameEqual(a, b string) bool {
 	return strings.EqualFold(strings.TrimSuffix(strings.TrimSpace(a), "."), strings.TrimSuffix(strings.TrimSpace(b), "."))
 }
+
+// Known reports whether the parser knows the record type.
+func Known(typ string) bool {
+	_, ok := dns.StringToType[strings.ToUpper(strings.TrimSpace(typ))]
+	return ok
+}

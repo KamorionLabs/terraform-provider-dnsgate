@@ -9,17 +9,19 @@ import (
 
 // Reasons of the gate's error answers ({"reason","message","details"}).
 const (
-	ReasonPrecondition   = "precondition"
-	ReasonNotFound       = "not_found"
-	ReasonForbidden      = "forbidden"
-	ReasonNotOwner       = "not_owner"
-	ReasonForeignRRset   = "foreign_rrset"
-	ReasonTainted        = "tainted"
-	ReasonZoneLocked     = "zone_locked"
-	ReasonUpstream       = "upstream"
-	ReasonInvalid        = "invalid"
-	ReasonTooManyChanges = "too_many_changes"
-	ReasonPolicyBusy     = "policy_busy"
+	ReasonPrecondition     = "precondition"
+	ReasonNotFound         = "not_found"
+	ReasonForbidden        = "forbidden"
+	ReasonNotOwner         = "not_owner"
+	ReasonForeignRRset     = "foreign_rrset"
+	ReasonTainted          = "tainted"
+	ReasonZoneLocked       = "zone_locked"
+	ReasonUpstream         = "upstream"
+	ReasonInvalid          = "invalid"
+	ReasonTooManyChanges   = "too_many_changes"
+	ReasonPolicyBusy       = "policy_busy"
+	ReasonStoreUnavailable = "store_unavailable"
+	ReasonPlanExpired      = "plan_expired"
 )
 
 // ValidationError is one entry of a 400 invalid_policy answer of the
