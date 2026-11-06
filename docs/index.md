@@ -18,9 +18,10 @@ gate enforces, on every request:
 - a full **audit trail** of who changed what, browsable in the gate UI.
 
 The provider is provider-neutral: the same `dnsgate_record_set` resource manages an RRset in a EuroDNS
-zone or in a Route53 hosted zone, alias records included. For EuroDNS only, the
-[kamorionlabs/eurodns](https://registry.terraform.io/providers/kamorionlabs/eurodns) provider also works
-through the gate.
+zone or in a Route53 hosted zone, alias records included. On zones whose DNS provider has URL forwards
+(EuroDNS), `dnsgate_url_forward` manages the HTTP redirect of a name with the same ownership and audit. For
+EuroDNS only, the [kamorionlabs/eurodns](https://registry.terraform.io/providers/kamorionlabs/eurodns)
+provider also works through the gate.
 
 ## Example
 

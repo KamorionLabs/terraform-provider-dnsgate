@@ -1,0 +1,70 @@
+---
+page_title: "{{.Name}} {{.Type}} - {{.ProviderName}}"
+subcategory: ""
+description: |-
+{{ .Description | plainmarkdown | trimspace | prefixlines "  " }}
+---
+
+# {{.Name}} ({{.Type}})
+
+{{ .Description | trimspace }}
+
+## Example Usage
+
+{{ tffile "examples/resources/dnsgate_url_forward/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Availability and permissions
+
+URL forwards exist only on zones whose DNS provider has them: EuroDNS. On a zone of another provider (Route53),
+the gate refuses the forward with `400 invalid`. The provider needs a gate that advertises the `forwards` feature
+(`GET /.well-known/dns-gate`); older gates fail at plan time with an explicit error.
+
+In the gate, a forward is the RRset of type `URLFWD` of its name: it appears with that type in the zone inventory
+(`dnsgate_record_sets`), and adoption and transfers handle it like any RRset. Writing it takes the action
+`dns.forward.write` on the zone, scoped by the `records.hosts` patterns of the role like record writes
+(`records.types` does not apply).
+
+## HTTPS
+
+A forward redirects the requests that reach the forwarded name. Whether it also answers `https://` requests depends
+on the DNS provider, not on the target: at EuroDNS, the forwards of a domain answer HTTPS only when the domain has an
+HTTPS redirect subscription, a paid product ordered at EuroDNS, outside the gate (the gate never orders one).
+Without it, a forward answers plain HTTP only. `url` may be an `https://` URL either way.
+
+`https_status` shows what the gate reads from the provider for the zone: `active` or `pending` when a subscription
+covers the domain, `inactive` when the forwards answer plain HTTP only, `unsupported` for a provider without
+forwards, `unknown` when the gate cannot tell.
+
+With `require_https = true`, the gate refuses the write (`409 https_unavailable`) unless the forwards of the zone
+answer HTTPS: the apply fails instead of creating or changing a forward that would answer plain HTTP only.
+`require_https` is sent on every write and never read back; changing it alone writes the forward again, unchanged,
+so that the gate checks HTTPS.
+
+## Ownership and teams
+
+The forward is owned by a team in the gate (`owner_team`), with the same rules as `dnsgate_record_set`: writes from
+other teams are refused (`403 not_owner`), as are writes on a forward created outside the gate (`409 foreign_rrset`)
+or modified outside the gate (`409 tainted`). `team` selects the team the identity acts for (`X-DNS-Gate-Team`), and
+changing it never moves the forward to another team: request a transfer in the gate (type `URLFWD`), then set
+`team` to the new owner.
+
+Each write is conditional: create sends `If-None-Match: *`, update and delete send `If-Match` with the content hash
+of the forward as last read, so a change made in the gate since the last refresh fails with `412` instead of being
+overwritten. A forward deleted outside Terraform is removed from the state and created again by the next apply.
+
+## Import
+
+In Terraform 1.5 and later, use an `import` block with the id `<zone>/<name>`:
+
+{{ tffile "examples/resources/dnsgate_url_forward/import-block.tf" }}
+
+or the command:
+
+{{ codefile "shell" "examples/resources/dnsgate_url_forward/import.sh" }}
+
+Only forwards owned by a team of the provider identity can be imported. A forward created outside the gate is
+*foreign*: adopt it for the team in the gate first (web UI, or `POST /api/v1/zones/{zone}/adopt` with the host and
+type `URLFWD`). An imported forward has `require_https = false` and no `team` in the state: when the configuration
+sets them, the first plan shows an update.
