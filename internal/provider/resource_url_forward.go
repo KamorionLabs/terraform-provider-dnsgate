@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
@@ -55,11 +56,12 @@ func (r *urlForwardResource) Metadata(_ context.Context, req resource.MetadataRe
 }
 
 func (r *urlForwardResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
-	frameOnly := func(what string) schema.StringAttribute {
+	frameOnly := func(what string, max int) schema.StringAttribute {
 		return schema.StringAttribute{
-			Optional:            true,
-			MarkdownDescription: what + " of the frame page. Only with `type = \"frame\"`.",
-			Validators:          []validator.String{trimmedValidator{}},
+			Optional: true,
+			MarkdownDescription: what + " of the frame page, plain text of at most " + strconv.Itoa(max) +
+				" characters without `<`, `>`, `\"`, `'` nor `` ` ``. Only with `type = \"frame\"`.",
+			Validators: []validator.String{trimmedValidator{}, frameTextValidator{max: max}},
 		}
 	}
 	resp.Schema = schema.Schema{
@@ -94,20 +96,21 @@ func (r *urlForwardResource) Schema(_ context.Context, _ resource.SchemaRequest,
 				Validators: []validator.String{stringvalidator.OneOf(client.ForwardTypes...)},
 			},
 			"url": schema.StringAttribute{
-				Required:            true,
-				MarkdownDescription: "Target, an absolute `http://` or `https://` URL, for example `https://www.example.com/landing`.",
-				Validators:          []validator.String{forwardURLValidator{}},
+				Required: true,
+				MarkdownDescription: "Target, an absolute `http://` or `https://` URL of at most 2048 bytes in canonical form, " +
+					"without user name, password, spaces nor unencoded `<>\"'`\\{}|^`, for example `https://www.example.com/landing`.",
+				Validators: []validator.String{forwardURLValidator{}},
 			},
-			"title":       frameOnly("Title"),
-			"keywords":    frameOnly("Meta keywords"),
-			"description": frameOnly("Meta description"),
+			"title":       frameOnly("Title", maxForwardTitle),
+			"keywords":    frameOnly("Meta keywords", maxForwardKeywords),
+			"description": frameOnly("Meta description", maxForwardDescription),
 			"require_https": schema.BoolAttribute{
 				Optional: true,
 				Computed: true,
 				Default:  booldefault.StaticBool(false),
 				MarkdownDescription: "Fail the apply instead of writing a forward that answers plain HTTP only: the gate refuses " +
 					"the write (`409 https_unavailable`) unless the forwards of the zone answer HTTPS (`https_status` `active`, " +
-					"`pending` or `no_forward`). Sent on every write, never read back: the state keeps the configured value. " +
+					"`no_forward`; `pending` is refused, its certificate is not issued yet). Sent on every write, never read back: the state keeps the configured value. " +
 					"Default `false`.",
 			},
 			"team": schema.StringAttribute{
@@ -133,7 +136,7 @@ func (r *urlForwardResource) Schema(_ context.Context, _ resource.SchemaRequest,
 			"https_status": schema.StringAttribute{
 				Computed: true,
 				MarkdownDescription: "Whether the forwards of the zone answer HTTPS requests, as the gate reads it from the DNS " +
-					"provider: `active` or `pending` (an HTTPS redirect subscription covers the domain), `no_forward`, `inactive` " +
+					"provider: `active`, `no_forward` or `pending` (an HTTPS redirect subscription covers the domain, `pending` while its certificate is issued), `inactive` " +
 					"(plain HTTP only), `unsupported` (the provider has no forwards), `unknown`.",
 				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},

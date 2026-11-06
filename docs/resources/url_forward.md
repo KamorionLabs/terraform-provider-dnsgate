@@ -51,20 +51,20 @@ resource "dnsgate_url_forward" "promo" {
 
 - `name` (String) Name relative to the zone, lowercase, without trailing dot: `go`, `www`, `@` for the apex. Changing it replaces the forward.
 - `type` (String) `301` (permanent redirect), `302` (temporary redirect) or `frame` (a page showing `url` in a frame, the browser keeping the forwarded name in its address bar).
-- `url` (String) Target, an absolute `http://` or `https://` URL, for example `https://www.example.com/landing`.
+- `url` (String) Target, an absolute `http://` or `https://` URL of at most 2048 bytes in canonical form, without user name, password, spaces nor unencoded `<>"'`\{}|^`, for example `https://www.example.com/landing`.
 - `zone` (String) Zone name, lowercase without trailing dot, for example `example.com`. Changing it replaces the forward.
 
 ### Optional
 
-- `description` (String) Meta description of the frame page. Only with `type = "frame"`.
-- `keywords` (String) Meta keywords of the frame page. Only with `type = "frame"`.
-- `require_https` (Boolean) Fail the apply instead of writing a forward that answers plain HTTP only: the gate refuses the write (`409 https_unavailable`) unless the forwards of the zone answer HTTPS (`https_status` `active`, `pending` or `no_forward`). Sent on every write, never read back: the state keeps the configured value. Default `false`.
+- `description` (String) Meta description of the frame page, plain text of at most 1000 characters without `<`, `>`, `"`, `'` nor `` ` ``. Only with `type = "frame"`.
+- `keywords` (String) Meta keywords of the frame page, plain text of at most 500 characters without `<`, `>`, `"`, `'` nor `` ` ``. Only with `type = "frame"`.
+- `require_https` (Boolean) Fail the apply instead of writing a forward that answers plain HTTP only: the gate refuses the write (`409 https_unavailable`) unless the forwards of the zone answer HTTPS (`https_status` `active`, `no_forward`; `pending` is refused, its certificate is not issued yet). Sent on every write, never read back: the state keeps the configured value. Default `false`.
 - `team` (String) Team of the provider identity to act for, when it belongs to several teams in the gate. Sent as the `X-DNS-Gate-Team` header on create, update and delete: the forward is created for this team, and the gate refuses to change it unless this team owns it. Unset, the gate uses the default team of the identity. Changing `team` never moves an existing forward to another team: the plan fails unless the forward is already owned by the new team (same rules as `dnsgate_record_set`).
-- `title` (String) Title of the frame page. Only with `type = "frame"`.
+- `title` (String) Title of the frame page, plain text of at most 200 characters without `<`, `>`, `"`, `'` nor `` ` ``. Only with `type = "frame"`.
 
 ### Read-Only
 
-- `https_status` (String) Whether the forwards of the zone answer HTTPS requests, as the gate reads it from the DNS provider: `active` or `pending` (an HTTPS redirect subscription covers the domain), `no_forward`, `inactive` (plain HTTP only), `unsupported` (the provider has no forwards), `unknown`.
+- `https_status` (String) Whether the forwards of the zone answer HTTPS requests, as the gate reads it from the DNS provider: `active`, `no_forward` or `pending` (an HTTPS redirect subscription covers the domain, `pending` while its certificate is issued), `inactive` (plain HTTP only), `unsupported` (the provider has no forwards), `unknown`.
 - `id` (String) `<zone>/<name>`, also the import id.
 - `owner_team` (String) Team that owns the forward in the gate.
 - `status` (String) Ownership status in the gate: `managed`, `pending`, `tainted` (modified outside the gate, writes blocked until reviewed), `foreign` (not owned by the gate).
@@ -87,12 +87,13 @@ on the DNS provider, not on the target: at EuroDNS, the forwards of a domain ans
 HTTPS redirect subscription, a paid product ordered at EuroDNS, outside the gate (the gate never orders one).
 Without it, a forward answers plain HTTP only. `url` may be an `https://` URL either way.
 
-`https_status` shows what the gate reads from the provider for the zone: `active` or `pending` when a subscription
-covers the domain, `inactive` when the forwards answer plain HTTP only, `unsupported` for a provider without
+`https_status` shows what the gate reads from the provider for the zone: `active`, `no_forward` or `pending` (certificate
+being issued) when a subscription covers the domain, `inactive` when the forwards answer plain HTTP only, `unsupported` for a provider without
 forwards, `unknown` when the gate cannot tell.
 
 With `require_https = true`, the gate refuses the write (`409 https_unavailable`) unless the forwards of the zone
-answer HTTPS: the apply fails instead of creating or changing a forward that would answer plain HTTP only.
+answer HTTPS (`active`, or `no_forward` for the first forward of a subscribed domain; `pending` is refused, its
+certificate is not issued yet, and so is a subscription past its expiration date): the apply fails instead of creating or changing a forward that would answer plain HTTP only.
 `require_https` is sent on every write and never read back; changing it alone writes the forward again, unchanged,
 so that the gate checks HTTPS.
 

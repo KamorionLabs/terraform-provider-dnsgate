@@ -26,6 +26,8 @@ import (
 	"github.com/miekg/dns"
 
 	"github.com/KamorionLabs/terraform-provider-dnsgate/internal/client"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Options configure the fake.
@@ -628,11 +630,23 @@ func validForward(f client.Forward) string {
 		return fmt.Sprintf("type %q is not one of %s", f.Type, strings.Join(client.ForwardTypes, ", "))
 	}
 	u, err := url.Parse(f.URL)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || strings.ContainsAny(f.URL, " \t\r\n") {
-		return fmt.Sprintf("url %q must be an absolute http:// or https:// URL", f.URL)
+	switch {
+	case len(f.URL) > 2048 || strings.IndexFunc(f.URL, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) }) >= 0 ||
+		strings.ContainsAny(f.URL, "<>\"'`\\{}|^"):
+		return fmt.Sprintf("url %q has spaces, control characters or characters to percent-encode, or is too long", f.URL)
+	case err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Opaque != "" || u.User != nil || u.String() != f.URL:
+		return fmt.Sprintf("url %q must be an absolute http:// or https:// URL in canonical form, without user information", f.URL)
 	}
 	if f.Type != client.ForwardFrame && (f.Title != "" || f.Keywords != "" || f.Description != "") {
 		return "title, keywords and description only apply to frame forwards"
+	}
+	for _, fld := range []struct {
+		v   string
+		max int
+	}{{f.Title, 200}, {f.Keywords, 500}, {f.Description, 1000}} {
+		if utf8.RuneCountInString(fld.v) > fld.max || strings.IndexFunc(fld.v, unicode.IsControl) >= 0 || strings.ContainsAny(fld.v, "<>\"'`") {
+			return "title, keywords and description are plain text of at most 200, 500 and 1000 characters"
+		}
 	}
 	return ""
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/KamorionLabs/terraform-provider-dnsgate/internal/client"
 	"github.com/KamorionLabs/terraform-provider-dnsgate/internal/fakegate"
+	"strings"
 )
 
 const fwdZone = "example.org"
@@ -220,6 +221,13 @@ func TestFakeURLForward_planTimeRefusals(t *testing.T) {
 		{forwardTF("x", fwdZone, "x", "301", "ftp://example.net/", ""), `Invalid forward URL`},
 		{forwardTF("x", fwdZone, "x", "301", " https://example.net/", ""), `remove the spaces`},
 		{forwardTF("x", fwdZone, "x", "frame", "https://example.net/", "  title = \" Shop\"\n"), `leading and trailing spaces`},
+		{forwardTF("x", fwdZone, "x", "301", "https://user:pw@example.net/", ""), `user name and password`},
+		{forwardTF("x", fwdZone, "x", "301", "https://example.net/?q=<x>", ""), `percent-encode`},
+		{forwardTF("x", fwdZone, "x", "301", "https://example.net/a%zz", ""), `Invalid forward URL`},
+		{forwardTF("x", fwdZone, "x", "301", "https://example.net/"+strings.Repeat("a", 2048), ""), `at most 2048 bytes`},
+		{forwardTF("x", fwdZone, "x", "frame", "https://example.net/", "  title = \"<b>Shop</b>\"\n"), `plain text only`},
+		{forwardTF("x", fwdZone, "x", "frame", "https://example.net/", "  keywords = \"it's\"\n"), `plain text only`},
+		{forwardTF("x", fwdZone, "x", "frame", "https://example.net/", "  title = \""+strings.Repeat("t", 201)+"\"\n"), `at most 200 characters`},
 		{forwardTF("x", fwdZone, "go.example.org", "301", "https://example.net/", ""), `write "go"`},
 		{forwardTF("x", fwdZone, "Go", "301", "https://example.net/", ""), `Invalid name`},
 		{recordSetTF("x", "x", "URLFWD", 300, "x"), `dnsgate_url_forward`},
@@ -275,6 +283,12 @@ func TestFakeURLForward_requireHTTPS(t *testing.T) {
 				),
 			},
 			{
+				Config:      p + strict,
+				ExpectError: regexp.MustCompile(`https_unavailable`),
+			},
+			{
+				// A certificate being issued does not answer HTTPS yet.
+				PreConfig:   func() { g.SetForwards(fwdZone, true, client.HTTPSPending) },
 				Config:      p + strict,
 				ExpectError: regexp.MustCompile(`https_unavailable`),
 			},

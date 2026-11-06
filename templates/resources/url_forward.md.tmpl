@@ -33,12 +33,13 @@ on the DNS provider, not on the target: at EuroDNS, the forwards of a domain ans
 HTTPS redirect subscription, a paid product ordered at EuroDNS, outside the gate (the gate never orders one).
 Without it, a forward answers plain HTTP only. `url` may be an `https://` URL either way.
 
-`https_status` shows what the gate reads from the provider for the zone: `active` or `pending` when a subscription
-covers the domain, `inactive` when the forwards answer plain HTTP only, `unsupported` for a provider without
+`https_status` shows what the gate reads from the provider for the zone: `active`, `no_forward` or `pending` (certificate
+being issued) when a subscription covers the domain, `inactive` when the forwards answer plain HTTP only, `unsupported` for a provider without
 forwards, `unknown` when the gate cannot tell.
 
 With `require_https = true`, the gate refuses the write (`409 https_unavailable`) unless the forwards of the zone
-answer HTTPS: the apply fails instead of creating or changing a forward that would answer plain HTTP only.
+answer HTTPS (`active`, or `no_forward` for the first forward of a subscribed domain; `pending` is refused, its
+certificate is not issued yet, and so is a subscription past its expiration date): the apply fails instead of creating or changing a forward that would answer plain HTTP only.
 `require_https` is sent on every write and never read back; changing it alone writes the forward again, unchanged,
 so that the gate checks HTTPS.
 

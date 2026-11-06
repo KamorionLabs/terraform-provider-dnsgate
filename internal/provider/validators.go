@@ -10,6 +10,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 
 	"github.com/KamorionLabs/terraform-provider-dnsgate/internal/client"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Same syntax as the gate (internal/server/rrsetapi.go).
@@ -97,23 +99,75 @@ func (typeValidator) ValidateString(_ context.Context, req validator.StringReque
 	}
 }
 
+// Limits of the gate: frame fields in characters, the URL in bytes.
+const (
+	maxForwardTitle       = 200
+	maxForwardKeywords    = 500
+	maxForwardDescription = 1000
+	maxForwardURL         = 2048
+)
+
 // validForwardURL checks a forward target as the gate does: an absolute
-// http:// or https:// URL without spaces. It returns the problem, "" if valid.
+// http:// or https:// URL of at most 2048 bytes, without user information,
+// spaces, control characters nor characters to percent-encode, written as
+// Go's net/url prints it back. It returns the problem, "" if valid.
 func validForwardURL(v string) string {
+	if len(v) > maxForwardURL {
+		return fmt.Sprintf("a URL has at most %d bytes", maxForwardURL)
+	}
+	if strings.IndexFunc(v, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) }) >= 0 {
+		return "remove the spaces and control characters"
+	}
+	if strings.ContainsAny(v, "<>\"'`\\{}|^") {
+		return "percent-encode < > \" ' ` \\ { } | ^"
+	}
 	u, err := url.Parse(v)
 	switch {
-	case strings.ContainsAny(v, " \t\r\n"):
-		return "remove the spaces"
-	case err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "":
+	case err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Opaque != "":
 		return "use an absolute http:// or https:// URL, for example \"https://www.example.com/\""
+	case u.User != nil:
+		return "remove the user name and password"
+	case u.String() != v:
+		return fmt.Sprintf("write it in canonical form: %q", u.String())
 	}
 	return ""
+}
+
+// validFrameText checks a frame field as the gate does: plain text of at
+// most max characters, without control characters nor < > " ' `.
+func validFrameText(v string, max int) string {
+	if utf8.RuneCountInString(v) > max {
+		return fmt.Sprintf("at most %d characters", max)
+	}
+	if strings.IndexFunc(v, unicode.IsControl) >= 0 || strings.ContainsAny(v, "<>\"'`") {
+		return "plain text only, without control characters nor < > \" ' `"
+	}
+	return ""
+}
+
+// frameTextValidator applies validFrameText.
+type frameTextValidator struct{ max int }
+
+func (v frameTextValidator) Description(context.Context) string {
+	return fmt.Sprintf("plain text of at most %d characters, without control characters nor < > \" ' `", v.max)
+}
+func (v frameTextValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (v frameTextValidator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	if problem := validFrameText(req.ConfigValue.ValueString(), v.max); problem != "" {
+		resp.Diagnostics.AddAttributeError(req.Path, "Invalid frame field", problem+".")
+	}
 }
 
 type forwardURLValidator struct{}
 
 func (forwardURLValidator) Description(context.Context) string {
-	return "absolute http:// or https:// URL without spaces"
+	return "absolute http:// or https:// URL in canonical form, without user information, spaces nor characters to percent-encode"
 }
 func (v forwardURLValidator) MarkdownDescription(ctx context.Context) string {
 	return v.Description(ctx)

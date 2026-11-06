@@ -63,7 +63,7 @@ type HTTPSRedirect struct {
 
 // AnswersHTTPS reports whether require_https is accepted with this status.
 func (h *HTTPSRedirect) AnswersHTTPS() bool {
-	return h != nil && (h.Status == HTTPSActive || h.Status == HTTPSPending || h.Status == HTTPSNoForward)
+	return h != nil && (h.Status == HTTPSActive || h.Status == HTTPSNoForward)
 }
 
 // ForwardView is GET /api/v1/zones/{zone}/forwards/{host}: the forward as an

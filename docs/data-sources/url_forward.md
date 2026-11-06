@@ -23,7 +23,7 @@ output "go_target" {
 }
 
 output "forwards_answer_https" {
-  value = contains(["active", "pending"], data.dnsgate_url_forward.go.https_status)
+  value = contains(["active", "no_forward"], data.dnsgate_url_forward.go.https_status)
 }
 ```
 
