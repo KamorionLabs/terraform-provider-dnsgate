@@ -52,11 +52,13 @@ resource "dnsgate_record_set" "apex" {
 
 | Name | |
 |---|---|
-| `dnsgate_record_set` | One RRset (all records of a name and type), values or alias. Id and import id `<zone>/<name>/<type>`. |
+| `dnsgate_record_set` | One RRset (all records of a name and type), values or alias, owned by a team (`team`, `owner_team`). Id and import id `<zone>/<name>/<type>`. |
 | `dnsgate_role`, `dnsgate_binding` | Roles and bindings of the gate's managed policy, owned by a policy delegation (for stacks that create pipelines). |
 | `dnsgate_zones` (data) | Zones readable by the identity, with ownership counts. |
 | `dnsgate_record_sets` (data) | Zone inventory with ownership, filtered by name glob, type, owner team, status. |
 | `dnsgate_record_set` (data) | One RRset, whoever owns it. |
+| `dnsgate_me` (data) | The provider identity as the gate sees it: roles, teams, default team. |
+| `dnsgate_teams`, `dnsgate_team` (data) | Teams of the gate policy; one team with its members, roles, RRsets owned per zone and pending transfers. |
 
 Documentation: [docs/](docs/index.md), generated from `templates/` and `examples/` (`make docs`).
 
@@ -70,7 +72,11 @@ The provider uses the gate REST API, one RRset per request:
 | Read | `GET` the same path (404: removed from the state) |
 | Update | `PUT` with `If-Match: "<hash>"`, the content hash kept in the private state at the last refresh or write |
 | Delete | `DELETE` with `If-Match: "<hash>"` |
-| Import | `GET`, refused unless the RRset is owned by the team of the identity |
+| Import | `GET`, refused unless the RRset is owned by a team of the identity |
+
+With `team` set, create, update and delete also send `X-DNS-Gate-Team: <team>`: the identity then acts for that
+one of its teams. Changing `team` never transfers ownership: the plan fails unless the RRset is already owned by
+the new team (transfers are requested and approved in the gate).
 
 A change made in the gate since the last refresh fails with `412` instead of being overwritten. `423
 zone_locked`, `429`, `5xx` (`store_unavailable` included) and transport errors are retried with exponential

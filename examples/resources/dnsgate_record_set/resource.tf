@@ -46,3 +46,15 @@ resource "dnsgate_record_set" "apex" {
     evaluate_target_health = false
   }
 }
+
+# An identity acting for several teams (for example a shared pipeline)
+# creates the record set for one of them. The plan fails unless the
+# identity is a member of that team.
+resource "dnsgate_record_set" "shop" {
+  zone   = "example.com"
+  name   = "shop"
+  type   = "CNAME"
+  ttl    = 300
+  values = ["shop.example.net."]
+  team   = "web"
+}
