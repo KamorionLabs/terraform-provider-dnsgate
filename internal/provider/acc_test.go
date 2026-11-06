@@ -52,3 +52,46 @@ resource "dnsgate_record_set" "acc" {
 		},
 	})
 }
+
+// TestAccLiveURLForward also needs DNSGATE_ACC_FORWARD_ZONE, a zone whose DNS
+// provider has URL forwards (EuroDNS), where the test may create and delete
+// the forward of tf-acc-fwd-<timestamp>. Without it the test is skipped.
+func TestAccLiveURLForward(t *testing.T) {
+	zone := os.Getenv("DNSGATE_ACC_FORWARD_ZONE")
+	if zone == "" {
+		t.Skip("DNSGATE_ACC_FORWARD_ZONE is not set")
+	}
+	name := fmt.Sprintf("tf-acc-fwd-%d", time.Now().Unix())
+	cfg := func(typ, url, extra string) string {
+		return fmt.Sprintf(`
+data "dnsgate_me" "me" {}
+
+resource "dnsgate_url_forward" "acc" {
+  zone = %q
+  name = %q
+  type = %q
+  url  = %q
+  team = data.dnsgate_me.me.default_team
+%s}
+
+data "dnsgate_url_forward" "acc" {
+  zone = dnsgate_url_forward.acc.zone
+  name = dnsgate_url_forward.acc.name
+}
+`, zone, name, typ, url, extra)
+	}
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: map[string]func() (tfprotov6.ProviderServer, error){
+			"dnsgate": providerserver.NewProtocol6WithError(New("acc")()),
+		},
+		Steps: []resource.TestStep{
+			{Config: cfg("301", "https://example.com/", ""), Check: resource.ComposeTestCheckFunc(
+				resource.TestCheckResourceAttr("dnsgate_url_forward.acc", "status", "managed"),
+				resource.TestCheckResourceAttrPair("dnsgate_url_forward.acc", "owner_team", "data.dnsgate_me.me", "default_team"),
+				resource.TestCheckResourceAttrPair("dnsgate_url_forward.acc", "https_status", "data.dnsgate_url_forward.acc", "https_status"),
+			)},
+			{Config: cfg("frame", "https://example.com/acc", "  title = \"dns-gate acceptance\"\n")},
+			{ResourceName: "dnsgate_url_forward.acc", ImportState: true, ImportStateId: zone + "/" + name, ImportStateVerify: true, ImportStateVerifyIgnore: []string{"team"}},
+		},
+	})
+}

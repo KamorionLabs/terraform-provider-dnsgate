@@ -405,12 +405,12 @@ func firstNonEmpty(v ...string) string {
 }
 
 func (p *dnsgateProvider) Resources(context.Context) []func() resource.Resource {
-	return []func() resource.Resource{newRecordSetResource, newRoleResource, newBindingResource}
+	return []func() resource.Resource{newRecordSetResource, newURLForwardResource, newRoleResource, newBindingResource}
 }
 
 func (p *dnsgateProvider) DataSources(context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{newZonesDataSource, newRecordSetsDataSource, newRecordSetDataSource, newMeDataSource,
-		newTeamsDataSource, newTeamDataSource}
+		newTeamsDataSource, newTeamDataSource, newURLForwardDataSource}
 }
 
 // providerDataFrom extracts the provider data in Configure of resources and data sources.

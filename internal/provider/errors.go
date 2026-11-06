@@ -22,6 +22,8 @@ var reasonHelp = map[string]string{
 	client.ReasonUpstream:         "The DNS provider behind the gate failed or refused the change.",
 	client.ReasonInvalid:          "The gate refused the request as invalid for this zone's DNS provider (record type, TTL or value).",
 	client.ReasonTooManyChanges:   "The change exceeds the maximum number of RRset changes per request allowed for this identity.",
+	client.ReasonInvalidForward:   "The gate refused the URL forward: type must be 301, 302 or frame, url an absolute http:// or https:// URL, and title, keywords and description apply to frame forwards only.",
+	client.ReasonHTTPSUnavailable: "require_https is set, but the URL forwards of this zone answer plain HTTP only. At EuroDNS a forward answers HTTPS only when the domain has an HTTPS redirect subscription, a paid product ordered at the DNS provider, outside the gate. Order it, or set require_https = false to accept a forward that answers plain HTTP only (the target url may be https:// either way).",
 	"invalid_policy":              "The gate refused the object: it is outside the limits of the delegation (policy.delegations in the gate configuration) or of the managed policy. The errors below name the offending fields.",
 	"delegation_required":         "This identity matches several delegations: set the delegation attribute.",
 	"name_taken":                  "The name is used by a role of the base policy or by a managed role edited by humans. Choose another name.",

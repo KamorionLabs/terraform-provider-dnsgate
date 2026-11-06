@@ -193,14 +193,7 @@ func (r *recordSetResource) ValidateConfig(ctx context.Context, req resource.Val
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if !cfg.Zone.IsUnknown() && !cfg.Name.IsUnknown() && !cfg.Zone.IsNull() {
-		zone, name := cfg.Zone.ValueString(), cfg.Name.ValueString()
-		if name == zone || strings.HasSuffix(name, "."+zone) {
-			rel := strings.TrimSuffix(strings.TrimSuffix(name, zone), ".")
-			resp.Diagnostics.AddAttributeError(path.Root("name"), "Name must be relative to the zone",
-				fmt.Sprintf("%q is a fully qualified name in zone %s: write %q.", name, zone, firstNonEmpty(rel, "@")))
-		}
-	}
+	checkRelativeName(cfg.Zone, cfg.Name, &resp.Diagnostics)
 	hasAlias := cfg.Alias != nil
 	if !cfg.Values.IsUnknown() {
 		switch hasValues := !cfg.Values.IsNull(); {
@@ -239,6 +232,19 @@ func (r *recordSetResource) ValidateConfig(ctx context.Context, req resource.Val
 				fmt.Sprintf("%q is not a valid %s value in zone file syntax. It is sent as is, and compared with what the gate "+
 					"returns as an exact string, so a value the gate rewrites will show a difference on every plan.", s.ValueString(), typ))
 		}
+	}
+}
+
+// checkRelativeName refuses a name written as a fully qualified name of the zone.
+func checkRelativeName(zoneV, nameV types.String, diags *diag.Diagnostics) {
+	if zoneV.IsUnknown() || nameV.IsUnknown() || zoneV.IsNull() {
+		return
+	}
+	zone, name := zoneV.ValueString(), nameV.ValueString()
+	if name == zone || strings.HasSuffix(name, "."+zone) {
+		rel := strings.TrimSuffix(strings.TrimSuffix(name, zone), ".")
+		diags.AddAttributeError(path.Root("name"), "Name must be relative to the zone",
+			fmt.Sprintf("%q is a fully qualified name in zone %s: write %q.", name, zone, firstNonEmpty(rel, "@")))
 	}
 }
 
@@ -585,16 +591,22 @@ func parseRecordSetID(id string) (zone, name, typ string, ok bool) {
 		return "", "", "", false
 	}
 	zone = client.NormalizeZone(parts[0])
-	name = strings.ToLower(strings.TrimSpace(parts[1]))
-	if name == "" || name == zone {
-		name = "@"
-	}
-	name = strings.TrimSuffix(strings.TrimSuffix(name, "."+zone), ".")
+	name = importName(zone, parts[1])
 	typ = strings.ToUpper(strings.TrimSpace(parts[2]))
 	if !zoneRe.MatchString(zone) || validName(name) != "" || !typeRe.MatchString(typ) {
 		return "", "", "", false
 	}
 	return zone, name, typ, true
+}
+
+// importName normalizes the name of an import id: lowercase, relative to
+// the zone, "@" for the apex.
+func importName(zone, name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" || name == zone {
+		return "@"
+	}
+	return strings.TrimSuffix(strings.TrimSuffix(name, "."+zone), ".")
 }
 
 func contains(s []string, v string) bool {
