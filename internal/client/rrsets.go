@@ -74,6 +74,9 @@ func condHeader(cond Condition) http.Header {
 	if cond.IfMatch != "" {
 		hdr.Set("If-Match", strconv.Quote(cond.IfMatch))
 	}
+	if cond.Team != "" {
+		hdr.Set(TeamHeader, cond.Team)
+	}
 	return hdr
 }
 
@@ -88,8 +91,9 @@ func (c *Client) PutRRset(ctx context.Context, zone, host, typ string, body RRse
 	return withETag(&s, h), nil
 }
 
-// DeleteRRset removes one RRset, with If-Match when ifMatch is set.
-func (c *Client) DeleteRRset(ctx context.Context, zone, host, typ, ifMatch string) error {
-	_, err := c.do(ctx, http.MethodDelete, RRsetPath(zone, host, typ), condHeader(Condition{IfMatch: ifMatch}), nil, nil)
+// DeleteRRset removes one RRset under a precondition (If-Match only).
+func (c *Client) DeleteRRset(ctx context.Context, zone, host, typ string, cond Condition) error {
+	cond.IfNoneMatch = false
+	_, err := c.do(ctx, http.MethodDelete, RRsetPath(zone, host, typ), condHeader(cond), nil, nil)
 	return err
 }

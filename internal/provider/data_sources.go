@@ -158,6 +158,7 @@ type recordSetsItem struct {
 	TTL       types.Int64  `tfsdk:"ttl"`
 	Values    types.List   `tfsdk:"values"`
 	Alias     types.Object `tfsdk:"alias"`
+	OwnerTeam types.String `tfsdk:"owner_team"`
 	Owner     types.String `tfsdk:"owner"`
 	Status    types.String `tfsdk:"status"`
 	Protected types.Bool   `tfsdk:"protected"`
@@ -191,7 +192,7 @@ func (d *recordSetsDataSource) Schema(_ context.Context, _ datasource.SchemaRequ
 					"character; `@` is the apex. For example `_acme-challenge.*` or `*.apps`.",
 			},
 			"type":   schema.StringAttribute{Optional: true, MarkdownDescription: "Keep only this record type (case-insensitive)."},
-			"owner":  schema.StringAttribute{Optional: true, MarkdownDescription: "Keep only the RRsets owned by this team."},
+			"owner":  schema.StringAttribute{Optional: true, MarkdownDescription: "Keep only the RRsets owned by this team (`owner_team`)."},
 			"status": schema.StringAttribute{Optional: true, MarkdownDescription: "Keep only this status: `managed`, `pending`, `tainted`, `foreign`, `missing`."},
 			"record_sets": schema.ListNestedAttribute{
 				Computed:            true,
@@ -203,7 +204,8 @@ func (d *recordSetsDataSource) Schema(_ context.Context, _ datasource.SchemaRequ
 					"ttl":        schema.Int64Attribute{Computed: true, MarkdownDescription: "Null for aliases."},
 					"values":     schema.ListAttribute{Computed: true, ElementType: types.StringType, MarkdownDescription: "Sorted values, as the gate stores them."},
 					"alias":      aliasSchema(),
-					"owner":      schema.StringAttribute{Computed: true, MarkdownDescription: "Owner team, empty when not owned."},
+					"owner_team": schema.StringAttribute{Computed: true, MarkdownDescription: "Owner team, empty when not owned."},
+					"owner":      schema.StringAttribute{Computed: true, MarkdownDescription: "Same as `owner_team`, kept for compatibility."},
 					"status":     schema.StringAttribute{Computed: true},
 					"protected":  schema.BoolAttribute{Computed: true, MarkdownDescription: "Protected by the gate configuration: never written."},
 					"read_only":  schema.StringAttribute{Computed: true, MarkdownDescription: "Why the gate never writes this RRset, empty otherwise."},
@@ -255,8 +257,9 @@ func (d *recordSetsDataSource) Read(ctx context.Context, req datasource.ReadRequ
 		data.RecordSets = append(data.RecordSets, recordSetsItem{
 			ID: types.StringValue(recordSetID(zone, rs.Host, rs.Type)), Name: types.StringValue(rs.Host), Type: types.StringValue(rs.Type),
 			TTL: ttlValue(rs), Values: types.ListValueMust(types.StringType, vals), Alias: aliasObject(rs.Alias),
-			Owner: types.StringValue(rs.Owner), Status: types.StringValue(rs.Status), Protected: types.BoolValue(rs.Protected),
-			ReadOnly: types.StringValue(rs.ReadOnly), Hash: types.StringValue(rs.Hash),
+			OwnerTeam: types.StringValue(rs.Owner), Owner: types.StringValue(rs.Owner), Status: types.StringValue(rs.Status),
+			Protected: types.BoolValue(rs.Protected),
+			ReadOnly:  types.StringValue(rs.ReadOnly), Hash: types.StringValue(rs.Hash),
 			CreatedBy: types.StringValue(rs.CreatedBy.Display()), UpdatedBy: types.StringValue(rs.UpdatedBy.Display()),
 		})
 	}
@@ -303,6 +306,7 @@ type recordSetDataModel struct {
 	TTL       types.Int64  `tfsdk:"ttl"`
 	Values    types.Set    `tfsdk:"values"`
 	Alias     types.Object `tfsdk:"alias"`
+	OwnerTeam types.String `tfsdk:"owner_team"`
 	Owner     types.String `tfsdk:"owner"`
 	Status    types.String `tfsdk:"status"`
 	Protected types.Bool   `tfsdk:"protected"`
@@ -317,17 +321,18 @@ func (d *recordSetDataSource) Schema(_ context.Context, _ datasource.SchemaReque
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "One RRset of a zone served by the gate, whoever owns it. Fails if it does not exist.",
 		Attributes: map[string]schema.Attribute{
-			"id":        schema.StringAttribute{Computed: true, MarkdownDescription: "`<zone>/<name>/<type>`."},
-			"zone":      schema.StringAttribute{Required: true},
-			"name":      schema.StringAttribute{Required: true, MarkdownDescription: "Name relative to the zone, `@` for the apex."},
-			"type":      schema.StringAttribute{Required: true},
-			"ttl":       schema.Int64Attribute{Computed: true, MarkdownDescription: "Null for aliases."},
-			"values":    schema.SetAttribute{Computed: true, ElementType: types.StringType, MarkdownDescription: "Values as the gate stores them."},
-			"alias":     aliasSchema(),
-			"owner":     schema.StringAttribute{Computed: true},
-			"status":    schema.StringAttribute{Computed: true},
-			"protected": schema.BoolAttribute{Computed: true},
-			"hash":      schema.StringAttribute{Computed: true, MarkdownDescription: "Content hash (the ETag of the RRset)."},
+			"id":         schema.StringAttribute{Computed: true, MarkdownDescription: "`<zone>/<name>/<type>`."},
+			"zone":       schema.StringAttribute{Required: true},
+			"name":       schema.StringAttribute{Required: true, MarkdownDescription: "Name relative to the zone, `@` for the apex."},
+			"type":       schema.StringAttribute{Required: true},
+			"ttl":        schema.Int64Attribute{Computed: true, MarkdownDescription: "Null for aliases."},
+			"values":     schema.SetAttribute{Computed: true, ElementType: types.StringType, MarkdownDescription: "Values as the gate stores them."},
+			"alias":      aliasSchema(),
+			"owner_team": schema.StringAttribute{Computed: true, MarkdownDescription: "Owner team, empty when not owned."},
+			"owner":      schema.StringAttribute{Computed: true, MarkdownDescription: "Same as `owner_team`, kept for compatibility."},
+			"status":     schema.StringAttribute{Computed: true},
+			"protected":  schema.BoolAttribute{Computed: true},
+			"hash":       schema.StringAttribute{Computed: true, MarkdownDescription: "Content hash (the ETag of the RRset)."},
 		},
 	}
 }
@@ -363,7 +368,7 @@ func (d *recordSetDataSource) Read(ctx context.Context, req datasource.ReadReque
 		data.Values = types.SetNull(types.StringType)
 	}
 	data.Alias = aliasObject(rs.Alias)
-	data.Owner, data.Status = types.StringValue(rs.Owner), types.StringValue(rs.Status)
+	data.OwnerTeam, data.Owner, data.Status = types.StringValue(rs.Owner), types.StringValue(rs.Owner), types.StringValue(rs.Status)
 	data.Protected, data.Hash = types.BoolValue(rs.Protected), types.StringValue(rs.Hash)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }

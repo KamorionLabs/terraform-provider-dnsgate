@@ -94,10 +94,10 @@ func TestRRsetLifecycle(t *testing.T) {
 	if err != nil || updated.Hash == created.Hash || updated.TTL != 600 {
 		t.Fatalf("update %+v, err %v", updated, err)
 	}
-	if err := c.DeleteRRset(ctx, zone, "www", "CNAME", created.Hash); !client.IsPrecondition(err) {
+	if err := c.DeleteRRset(ctx, zone, "www", "CNAME", client.Condition{IfMatch: created.Hash}); !client.IsPrecondition(err) {
 		t.Fatalf("delete with stale hash: expected 412, got %v", err)
 	}
-	if err := c.DeleteRRset(ctx, zone, "www", "CNAME", updated.Hash); err != nil {
+	if err := c.DeleteRRset(ctx, zone, "www", "CNAME", client.Condition{IfMatch: updated.Hash}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := c.GetRRset(ctx, zone, "www", "CNAME"); !client.Is(err, 404, client.ReasonNotFound) {
@@ -113,7 +113,7 @@ func TestOwnershipRefusals(t *testing.T) {
 	if e, ok := client.AsAPIError(err); !ok || e.Status != 409 || e.Reason != client.ReasonForeignRRset {
 		t.Fatalf("expected 409 foreign_rrset, got %v", err)
 	}
-	if err := c.DeleteRRset(ctx, zone, "other", "A", ""); !client.Is(err, 403, client.ReasonNotOwner) {
+	if err := c.DeleteRRset(ctx, zone, "other", "A", client.Condition{}); !client.Is(err, 403, client.ReasonNotOwner) {
 		t.Fatalf("expected 403 not_owner, got %v", err)
 	}
 }

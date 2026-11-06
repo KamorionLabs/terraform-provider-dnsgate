@@ -26,12 +26,15 @@ func TestAccLiveRecordSet(t *testing.T) {
 	name := fmt.Sprintf("tf-acc-%d", time.Now().Unix())
 	cfg := func(ttl int, value string) string {
 		return fmt.Sprintf(`
+data "dnsgate_me" "me" {}
+
 resource "dnsgate_record_set" "acc" {
   zone   = %q
   name   = %q
   type   = "TXT"
   ttl    = %d
   values = [%q]
+  team   = data.dnsgate_me.me.default_team
 }
 `, zone, name, ttl, value)
 	}
@@ -40,9 +43,12 @@ resource "dnsgate_record_set" "acc" {
 			"dnsgate": providerserver.NewProtocol6WithError(New("acc")()),
 		},
 		Steps: []resource.TestStep{
-			{Config: cfg(300, "dns-gate acceptance "+name), Check: resource.TestCheckResourceAttr("dnsgate_record_set.acc", "status", "managed")},
+			{Config: cfg(300, "dns-gate acceptance "+name), Check: resource.ComposeTestCheckFunc(
+				resource.TestCheckResourceAttr("dnsgate_record_set.acc", "status", "managed"),
+				resource.TestCheckResourceAttrPair("dnsgate_record_set.acc", "owner_team", "data.dnsgate_me.me", "default_team"),
+			)},
 			{Config: cfg(600, "dns-gate acceptance "+name+" updated")},
-			{ResourceName: "dnsgate_record_set.acc", ImportState: true, ImportStateId: zone + "/" + name + "/TXT", ImportStateVerify: true, ImportStateVerifyIgnore: []string{"values"}},
+			{ResourceName: "dnsgate_record_set.acc", ImportState: true, ImportStateId: zone + "/" + name + "/TXT", ImportStateVerify: true, ImportStateVerifyIgnore: []string{"values", "team"}},
 		},
 	})
 }

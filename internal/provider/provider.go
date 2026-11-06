@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
@@ -183,6 +184,24 @@ func (p *dnsgateProvider) Schema(_ context.Context, _ provider.SchemaRequest, re
 type providerData struct {
 	client *client.Client
 	info   *client.Info
+
+	meMu sync.Mutex
+	me   *client.Me
+}
+
+// whoami returns GET /api/v1/me, read once per provider instance.
+func (pd *providerData) whoami(ctx context.Context) (*client.Me, error) {
+	pd.meMu.Lock()
+	defer pd.meMu.Unlock()
+	if pd.me != nil {
+		return pd.me, nil
+	}
+	me, err := pd.client.Me(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pd.me = me
+	return me, nil
 }
 
 func (p *dnsgateProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
@@ -390,7 +409,8 @@ func (p *dnsgateProvider) Resources(context.Context) []func() resource.Resource 
 }
 
 func (p *dnsgateProvider) DataSources(context.Context) []func() datasource.DataSource {
-	return []func() datasource.DataSource{newZonesDataSource, newRecordSetsDataSource, newRecordSetDataSource}
+	return []func() datasource.DataSource{newZonesDataSource, newRecordSetsDataSource, newRecordSetDataSource, newMeDataSource,
+		newTeamsDataSource, newTeamDataSource}
 }
 
 // providerDataFrom extracts the provider data in Configure of resources and data sources.

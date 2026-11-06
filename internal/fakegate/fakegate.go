@@ -1,7 +1,8 @@
 // Package fakegate is an in-memory dns-gate implementing the REST contract
 // used by the provider: discovery, zones, inventory, per-RRset GET/PUT/DELETE
 // with ETag/If-Match/If-None-Match, ownership (foreign, tainted, other
-// teams), the delegation API, and fault injection. Values are canonicalized
+// teams), teams (X-DNS-Gate-Team, GET /api/v1/teams[/{team}]), the
+// delegation API, and fault injection. Values are canonicalized
 // like the gate's Route53 adapter (github.com/miekg/dns presentation format:
 // absolute names, quoted TXT split into 255-byte strings), alias targets are
 // lowercased with a trailing dot.
@@ -37,6 +38,9 @@ type Options struct {
 	// OldGate answers 404 not_found "unknown API endpoint" on per-RRset
 	// routes, like a gate without the RRset API.
 	OldGate bool
+	// NoTeams behaves like a gate before first-class teams: no default_team
+	// in /api/v1/me, X-DNS-Gate-Team ignored, no /api/v1/teams routes.
+	NoTeams bool
 }
 
 // Fault makes matching requests fail.
@@ -69,6 +73,12 @@ type Server struct {
 	// IfMatch count the preconditions received.
 	Writes, IfNoneMatch, IfMatch int
 	Policy                       *Policy
+	// TeamHeaders counts the X-DNS-Gate-Team values received on writes.
+	TeamHeaders map[string]int
+	// TeamInfos are the teams of GET /api/v1/teams; nil: the caller's teams
+	// as declared teams. Strict is the strict flag of the list.
+	TeamInfos []client.TeamInfo
+	Strict    bool
 }
 
 // New starts a fake gate.
@@ -79,7 +89,7 @@ func New(o Options) *Server {
 	if len(o.Teams) == 0 {
 		o.Teams = []string{"team-a"}
 	}
-	s := &Server{opts: o, zones: map[string]*zone{}, Requests: map[string]int{}, Policy: NewPolicy()}
+	s := &Server{opts: o, zones: map[string]*zone{}, Requests: map[string]int{}, Policy: NewPolicy(), TeamHeaders: map[string]int{}}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
 	return s
 }
@@ -275,9 +285,19 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	if team := r.Header.Get(client.TeamHeader); team != "" && !s.opts.NoTeams && r.URL.Path != "/api/v1/me" && !contains(s.opts.Teams, team) {
+		Error(w, http.StatusForbidden, client.ReasonNotTeamMember, "team "+team+" is not one of your teams")
+		return
+	}
 	switch p := r.URL.Path; {
 	case p == "/api/v1/me":
-		writeJSON(w, http.StatusOK, client.Me{Subject: "fake:terraform", Name: "terraform", Category: "pipeline", Teams: s.opts.Teams})
+		me := client.Me{Subject: "fake:terraform", Name: "terraform", Category: "pipeline", Teams: s.opts.Teams}
+		if !s.opts.NoTeams {
+			me.DefaultTeam = s.opts.Teams[0]
+		}
+		writeJSON(w, http.StatusOK, me)
+	case (p == "/api/v1/teams" || strings.HasPrefix(p, "/api/v1/teams/")) && !s.opts.NoTeams && r.Method == http.MethodGet:
+		s.teams(w, strings.TrimPrefix(strings.TrimPrefix(p, "/api/v1/teams"), "/"))
 	case p == "/api/v1/zones":
 		s.listZones(w)
 	case strings.HasPrefix(p, client.DelegatedPath+"/"):
@@ -388,7 +408,13 @@ func etagMatches(header, hash string) bool {
 func (s *Server) rrset(w http.ResponseWriter, r *http.Request, z *zone, host, typ string) {
 	key := host + "/" + typ
 	cur := z.sets[key]
-	team := s.opts.Teams[0]
+	team, acting := s.opts.Teams[0], s.opts.Teams
+	if h := r.Header.Get(client.TeamHeader); h != "" && r.Method != http.MethodGet {
+		s.TeamHeaders[h]++
+		if !s.opts.NoTeams {
+			team, acting = h, []string{h}
+		}
+	}
 	switch r.Method {
 	case http.MethodGet:
 		if cur == nil {
@@ -433,7 +459,7 @@ func (s *Server) rrset(w http.ResponseWriter, r *http.Request, z *zone, host, ty
 		case cur.Protected:
 			Error(w, http.StatusForbidden, "forbidden", key+" is protected")
 			return
-		case !contains(s.opts.Teams, cur.Owner):
+		case !contains(acting, cur.Owner):
 			Error(w, http.StatusForbidden, "not_owner", key+" is owned by team "+cur.Owner)
 			return
 		}
@@ -495,4 +521,60 @@ func contains(s []string, v string) bool {
 		}
 	}
 	return false
+}
+
+// teams serves GET /api/v1/teams and GET /api/v1/teams/{team}.
+func (s *Server) teams(w http.ResponseWriter, name string) {
+	infos := s.TeamInfos
+	if infos == nil {
+		for _, t := range s.opts.Teams {
+			infos = append(infos, client.TeamInfo{Name: t, Kind: client.TeamKindDeclared, Layer: "base", Roles: []string{"writer"}})
+		}
+	}
+	owned := map[string][]client.TeamZone{}
+	names := make([]string, 0, len(s.zones))
+	for n := range s.zones {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		count := map[string]int{}
+		for _, rs := range s.zones[n].sets {
+			if rs.Owner != "" {
+				count[rs.Owner]++
+			}
+		}
+		for t, c := range count {
+			owned[t] = append(owned[t], client.TeamZone{Zone: n, RRsets: c})
+		}
+	}
+	known := map[string]bool{}
+	for _, t := range infos {
+		known[t.Name] = true
+	}
+	owners := make([]string, 0, len(owned))
+	for t := range owned {
+		if !known[t] {
+			owners = append(owners, t)
+		}
+	}
+	sort.Strings(owners)
+	for _, t := range owners {
+		infos = append(infos, client.TeamInfo{Name: t, Kind: client.TeamKindStore, Roles: []string{}})
+	}
+	if name == "" {
+		writeJSON(w, http.StatusOK, client.TeamList{Strict: s.Strict, Teams: infos})
+		return
+	}
+	for _, t := range infos {
+		if t.Name == name {
+			d := client.TeamDetail{TeamInfo: t, Owned: owned[name], Transfers: []client.Transfer{}}
+			if d.Owned == nil {
+				d.Owned = []client.TeamZone{}
+			}
+			writeJSON(w, http.StatusOK, d)
+			return
+		}
+	}
+	Error(w, http.StatusNotFound, "not_found", "unknown team "+name)
 }
