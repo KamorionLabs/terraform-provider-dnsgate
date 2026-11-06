@@ -54,13 +54,15 @@ const (
 	StatusMissing = "missing"
 )
 
-// RRset is one RRset with its ownership, as the gate returns it.
+// RRset is one RRset with its ownership, as the gate returns it. The URL
+// forward of a host is the RRset of type URLFWD, with Forward set and TTL 0.
 type RRset struct {
 	Host      string     `json:"host"`
 	Type      string     `json:"type"`
 	TTL       int        `json:"ttl"`
 	Values    []string   `json:"values"`
 	Alias     *Alias     `json:"alias,omitempty"`
+	Forward   *Forward   `json:"forward,omitempty"`
 	ReadOnly  string     `json:"read_only,omitempty"`
 	Hash      string     `json:"hash"`
 	Status    string     `json:"status"`
