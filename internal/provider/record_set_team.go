@@ -37,10 +37,8 @@ func (r *recordSetResource) ModifyPlan(ctx context.Context, req resource.ModifyP
 	if resp.Diagnostics.HasError() || plan.Team.IsUnknown() || plan.Team.IsNull() {
 		return
 	}
-	team := plan.Team.ValueString()
 	if req.State.Raw.IsNull() {
-		r.checkTeam(ctx, team, &resp.Diagnostics)
-		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("owner_team"), team)...)
+		planCreateTeam(ctx, r.pd, plan.Team.ValueString(), resp)
 		return
 	}
 	var state recordSetModel
@@ -48,32 +46,59 @@ func (r *recordSetResource) ModifyPlan(ctx context.Context, req resource.ModifyP
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	changed := !plan.Team.Equal(state.Team) || !sameContent(&plan, &state)
-	owner := firstNonEmpty(state.OwnerTeam.ValueString(), state.Owner.ValueString())
-	if owner == "" || owner == team {
-		if changed {
-			r.checkTeam(ctx, team, &resp.Diagnostics)
+	zone, name, typ := state.key()
+	planTeamChange(ctx, r.pd, teamChange{
+		Team:    plan.Team.ValueString(),
+		Owner:   firstNonEmpty(state.OwnerTeam.ValueString(), state.Owner.ValueString()),
+		Changed: !plan.Team.Equal(state.Team) || !sameContent(&plan, &state),
+		Zone:    zone, Object: name + " " + typ, Kind: "Record set", Noun: "an RRset",
+	}, &resp.Diagnostics)
+}
+
+// planCreateTeam checks the team of a new object and plans it as its owner team.
+func planCreateTeam(ctx context.Context, pd *providerData, team string, resp *resource.ModifyPlanResponse) {
+	checkTeam(ctx, pd, team, &resp.Diagnostics)
+	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("owner_team"), team)...)
+}
+
+// teamChange is the team of an existing owned object (record set or URL
+// forward) in a plan.
+type teamChange struct {
+	// Team is the planned team, Owner the owner team in the state.
+	Team, Owner string
+	// Changed tells whether team or the content changes.
+	Changed bool
+	// Zone, Object ("www A"), Kind ("Record set") and Noun ("an RRset")
+	// name the object in the diagnostics.
+	Zone, Object, Kind, Noun string
+}
+
+// planTeamChange refuses a change of an object owned by another team than
+// team, and warns when such an object does not change.
+func planTeamChange(ctx context.Context, pd *providerData, c teamChange, diags *diag.Diagnostics) {
+	if c.Owner == "" || c.Owner == c.Team {
+		if c.Changed {
+			checkTeam(ctx, pd, c.Team, diags)
 		}
 		return
 	}
-	zone, name, typ := state.key()
-	detail := fmt.Sprintf("%s %s in %s is owned by team %q in the gate, and this configuration sets team = %q. ", name, typ, zone, owner, team) +
-		"Terraform does not move an RRset to another team. Ownership moves only through a transfer request approved in the " +
-		"gate (web UI, or POST /api/v1/zones/" + zone + "/transfers, approved by a member of the owner team or a holder of " +
+	detail := fmt.Sprintf("%s in %s is owned by team %q in the gate, and this configuration sets team = %q. ", c.Object, c.Zone, c.Owner, c.Team) +
+		"Terraform does not move " + c.Noun + " to another team. Ownership moves only through a transfer request approved in the " +
+		"gate (web UI, or POST /api/v1/zones/" + c.Zone + "/transfers, approved by a member of the owner team or a holder of " +
 		"dns.ownership.approve). Once the transfer is applied, plan again: owner_team then matches team. " +
-		"To keep the current owner, set team = \"" + owner + "\" (or remove team if it is the default team of this identity)."
-	if changed {
-		resp.Diagnostics.AddAttributeError(path.Root("team"), "Record set owned by another team", detail)
+		"To keep the current owner, set team = \"" + c.Owner + "\" (or remove team if it is the default team of this identity)."
+	if c.Changed {
+		diags.AddAttributeError(path.Root("team"), c.Kind+" owned by another team", detail)
 		return
 	}
-	resp.Diagnostics.AddAttributeWarning(path.Root("team"), "Record set owned by another team",
-		detail+" Until then, any change or destroy of this record set will be refused.")
+	diags.AddAttributeWarning(path.Root("team"), c.Kind+" owned by another team",
+		detail+" Until then, any change or destroy of "+c.Object+" will be refused.")
 }
 
 // checkTeam reports, at plan time, a team the identity cannot act for.
 // Errors reading /api/v1/me are left to the write, which the gate checks.
-func (r *recordSetResource) checkTeam(ctx context.Context, team string, diags *diag.Diagnostics) {
-	me, err := r.pd.whoami(ctx)
+func checkTeam(ctx context.Context, pd *providerData, team string, diags *diag.Diagnostics) {
+	me, err := pd.whoami(ctx)
 	if err != nil {
 		tflog.Debug(ctx, "cannot read /api/v1/me, team not checked at plan time", map[string]any{"error": err.Error()})
 		return
@@ -88,7 +113,7 @@ func (r *recordSetResource) checkTeam(ctx context.Context, team string, diags *d
 		diags.AddAttributeError(path.Root("team"), "The gate does not support team selection",
 			fmt.Sprintf("The gate (version %s) writes for the first team of the identity, %q, and ignores the "+
 				"X-DNS-Gate-Team header. Upgrade the gate to a version with teams, or remove team.",
-				firstNonEmpty(r.pd.info.Version, "unknown"), me.Teams[0]))
+				firstNonEmpty(pd.info.Version, "unknown"), me.Teams[0]))
 	}
 }
 

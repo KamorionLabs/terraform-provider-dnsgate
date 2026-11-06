@@ -53,10 +53,12 @@ resource "dnsgate_record_set" "apex" {
 | Name | |
 |---|---|
 | `dnsgate_record_set` | One RRset (all records of a name and type), values or alias, owned by a team (`team`, `owner_team`). Id and import id `<zone>/<name>/<type>`. |
+| `dnsgate_url_forward` | URL forward (HTTP redirect) of a name: `301`, `302` or `frame` to a URL, owned by a team like an RRset, on zones whose DNS provider has forwards (EuroDNS). `require_https` fails the apply unless the forwards of the zone answer HTTPS. Id and import id `<zone>/<name>`. Needs a gate with the `forwards` feature. |
 | `dnsgate_role`, `dnsgate_binding` | Roles and bindings of the gate's managed policy, owned by a policy delegation (for stacks that create pipelines). |
 | `dnsgate_zones` (data) | Zones readable by the identity, with ownership counts. |
 | `dnsgate_record_sets` (data) | Zone inventory with ownership, filtered by name glob, type, owner team, status. |
 | `dnsgate_record_set` (data) | One RRset, whoever owns it. |
+| `dnsgate_url_forward` (data) | The URL forward of a name, whoever owns it, with the HTTPS status of the forwards of its zone. |
 | `dnsgate_me` (data) | The provider identity as the gate sees it: roles, teams, default team. |
 | `dnsgate_teams`, `dnsgate_team` (data) | Teams of the gate policy; one team with its members, roles, RRsets owned per zone and pending transfers. |
 
@@ -82,6 +84,27 @@ A change made in the gate since the last refresh fails with `412` instead of bei
 zone_locked`, `429`, `5xx` (`store_unavailable` included) and transport errors are retried with exponential
 backoff and `Retry-After`; if a write is refused after a retry because an earlier attempt went through, the
 provider reads the RRset back and accepts it when it holds the desired content.
+
+## URL forwards
+
+```hcl
+resource "dnsgate_url_forward" "go" {
+  zone = "example.com"
+  name = "go"
+  type = "301" # or "302", or "frame" (with optional title, keywords, description)
+  url  = "https://www.example.com/landing"
+}
+```
+
+URL forwards (HTTP redirects) exist only on zones whose DNS provider has them (EuroDNS); the gate refuses them
+elsewhere. They are written through `PUT/DELETE /api/v1/zones/{zone}/forwards/{name}` with the same preconditions,
+team selection and ownership as record sets (in the gate, the forward of a name is its RRset of type `URLFWD`), and
+need the gate action `dns.forward.write`, scoped by the `records.hosts` patterns of the role.
+
+A forward answers HTTPS requests only when the domain has an EuroDNS HTTPS redirect subscription, a paid product
+ordered at EuroDNS outside the gate; otherwise it answers plain HTTP only (the target `url` may be `https://`
+either way). `https_status` shows what the gate reads, and `require_https = true` makes the apply fail
+(`409 https_unavailable`) instead of writing a forward that answers plain HTTP only.
 
 ## Value comparison
 
@@ -145,6 +168,7 @@ make build lint
 make test        # unit and resource tests against an in-memory fake gate, terraform from PATH
 make test-tofu   # the same with OpenTofu
 make testacc     # TF_ACC=1 against a real gate: DNSGATE_ENDPOINT, DNSGATE_TOKEN, DNSGATE_ACC_ZONE
+                 # (+ DNSGATE_ACC_FORWARD_ZONE, a EuroDNS zone, for the URL forward test)
 make docs        # tfplugindocs
 ```
 
