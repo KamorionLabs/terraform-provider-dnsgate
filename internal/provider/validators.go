@@ -12,6 +12,8 @@ import (
 	"github.com/KamorionLabs/terraform-provider-dnsgate/internal/client"
 	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/net/idna"
 )
 
 // Same syntax as the gate (internal/server/rrsetapi.go).
@@ -115,8 +117,8 @@ func validForwardURL(v string) string {
 	if len(v) > maxForwardURL {
 		return fmt.Sprintf("a URL has at most %d bytes", maxForwardURL)
 	}
-	if strings.IndexFunc(v, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) }) >= 0 {
-		return "remove the spaces and control characters"
+	if strings.IndexFunc(v, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) || unicode.Is(unicode.Cf, r) }) >= 0 {
+		return "remove the spaces, control and format characters"
 	}
 	if strings.ContainsAny(v, "<>\"'`\\{}|^") {
 		return "percent-encode < > \" ' ` \\ { } | ^"
@@ -127,6 +129,11 @@ func validForwardURL(v string) string {
 		return "use an absolute http:// or https:// URL, for example \"https://www.example.com/\""
 	case u.User != nil:
 		return "remove the user name and password"
+	case strings.IndexFunc(u.Host, func(r rune) bool { return r > unicode.MaxASCII }) >= 0:
+		if ascii, err := idna.Lookup.ToASCII(u.Hostname()); err == nil {
+			return fmt.Sprintf("write the host in punycode: %s", ascii)
+		}
+		return "write the host in punycode (xn--...)"
 	case u.String() != v:
 		return fmt.Sprintf("write it in canonical form: %q", u.String())
 	}
@@ -139,8 +146,8 @@ func validFrameText(v string, max int) string {
 	if utf8.RuneCountInString(v) > max {
 		return fmt.Sprintf("at most %d characters", max)
 	}
-	if strings.IndexFunc(v, unicode.IsControl) >= 0 || strings.ContainsAny(v, "<>\"'`") {
-		return "plain text only, without control characters nor < > \" ' `"
+	if strings.IndexFunc(v, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) }) >= 0 || strings.ContainsAny(v, "<>\"'`") {
+		return "plain text only, without control or format characters nor < > \" ' `"
 	}
 	return ""
 }

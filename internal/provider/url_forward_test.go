@@ -227,6 +227,8 @@ func TestFakeURLForward_planTimeRefusals(t *testing.T) {
 		{forwardTF("x", fwdZone, "x", "301", "https://example.net/"+strings.Repeat("a", 2048), ""), `at most 2048 bytes`},
 		{forwardTF("x", fwdZone, "x", "frame", "https://example.net/", "  title = \"<b>Shop</b>\"\n"), `plain text only`},
 		{forwardTF("x", fwdZone, "x", "frame", "https://example.net/", "  keywords = \"it's\"\n"), `plain text only`},
+		{forwardTF("x", fwdZone, "x", "frame", "https://example.net/", "  title = \"Shop\u202egnp\"\n"), `plain text only`},
+		{forwardTF("x", fwdZone, "x", "301", "https://exämple.net/", ""), `punycode: xn--exmple-cua.net`},
 		{forwardTF("x", fwdZone, "x", "frame", "https://example.net/", "  title = \""+strings.Repeat("t", 201)+"\"\n"), `at most 200 characters`},
 		{forwardTF("x", fwdZone, "go.example.org", "301", "https://example.net/", ""), `write "go"`},
 		{forwardTF("x", fwdZone, "Go", "301", "https://example.net/", ""), `Invalid name`},
