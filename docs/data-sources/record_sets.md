@@ -42,7 +42,7 @@ output "to_adopt" {
 ### Optional
 
 - `name` (String) Glob on the name relative to the zone: `*` matches any characters (dots included), `?` one character; `@` is the apex. For example `_acme-challenge.*` or `*.apps`.
-- `owner` (String) Keep only the RRsets owned by this team.
+- `owner` (String) Keep only the RRsets owned by this team (`owner_team`).
 - `status` (String) Keep only this status: `managed`, `pending`, `tainted`, `foreign`, `missing`.
 - `type` (String) Keep only this record type (case-insensitive).
 
@@ -60,7 +60,8 @@ Read-Only:
 - `hash` (String) Content hash (the ETag of the RRset).
 - `id` (String) `<zone>/<name>/<type>`, the import id of `dnsgate_record_set`.
 - `name` (String)
-- `owner` (String) Owner team, empty when not owned.
+- `owner` (String) Same as `owner_team`, kept for compatibility.
+- `owner_team` (String) Owner team, empty when not owned.
 - `protected` (Boolean) Protected by the gate configuration: never written.
 - `read_only` (String) Why the gate never writes this RRset, empty otherwise.
 - `status` (String)

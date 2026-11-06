@@ -40,12 +40,32 @@ in the form the gate stores (the `dnsgate_record_sets` data source or the gate's
 Names inside values are absolute whether or not they end with a dot. Through a gate, a CNAME target written
 `target.example.net` means `target.example.net.`, never `target.example.net.<zone>`.
 
-## Ownership
+## Ownership and teams
 
-The RRset is owned by the team of the provider identity in the gate (`owner`). The gate refuses writes from
-other teams (`403 not_owner`), on RRsets created outside the gate (`409 foreign_rrset`) and on RRsets modified
-outside the gate (`409 tainted`, `status = "tainted"`) until an administrator reviews them. A plan shows a
-warning for tainted or foreign RRsets.
+Every RRset written through the gate is owned by a team (`owner_team`). The gate refuses writes from other teams
+(`403 not_owner`), on RRsets created outside the gate (`409 foreign_rrset`) and on RRsets modified outside the
+gate (`409 tainted`, `status = "tainted"`) until an administrator reviews them. A plan shows a warning for
+tainted or foreign RRsets.
+
+An identity may act for several teams (the `teams` of the `dnsgate_me` data source). Without `team`, the gate
+creates RRsets for its default team (`default_team`, the first one) and lets it change the RRsets of all its
+teams. With `team`, the provider sends the `X-DNS-Gate-Team` header on create, update and delete: the RRset is
+created for that team, and changed or deleted only while that team owns it. The plan fails when the identity is
+not a member of the team.
+
+Changing `team` never moves an RRset to another team. Terraform does not transfer ownership, and does not delete
+and re-create the RRset either (the name would have no records for a while, and the gate reserves a deleted
+RRset for its team). If `team` differs from `owner_team`:
+
+- with any change to the record set, `team` included, the plan fails and explains how to transfer it;
+- without a change (the RRset was transferred to another team in the gate since), the plan shows a warning:
+  further changes, and destroy, will be refused.
+
+To move an RRset to another team, request a transfer in the gate (web UI, or
+`POST /api/v1/zones/{zone}/transfers`); a member of the owner team or a holder of `dns.ownership.approve`
+approves it. Once it is applied, set `team` to the new team: the next plan updates the state only, nothing is
+written. A gate without teams ignores the header: `team` is then accepted only when it names the first team of
+the identity, which such a gate writes for anyway, and `owner_team` is filled as before.
 
 ## Import
 
@@ -57,7 +77,9 @@ or the command:
 
 {{ codefile "shell" "examples/resources/dnsgate_record_set/import.sh" }}
 
-Only RRsets owned by the team of the provider identity can be imported. An RRset created outside the gate is
+Only RRsets owned by a team of the provider identity can be imported. An imported record set has no `team` in
+the state: when the configuration sets the owner team, the first plan shows an update of `team` that writes
+nothing. An RRset created outside the gate is
 *foreign*: adopt it for the team in the gate first (web UI, or `POST /api/v1/zones/{zone}/adopt`). The gate
 generates the configuration and the import blocks of a team's RRsets with
 `GET /api/v1/zones/{zone}/terraform?team=<team>`.

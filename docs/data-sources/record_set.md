@@ -38,7 +38,8 @@ output "mx_owner" {
 - `alias` (Attributes) Alias target, null for records with values. (see [below for nested schema](#nestedatt--alias))
 - `hash` (String) Content hash (the ETag of the RRset).
 - `id` (String) `<zone>/<name>/<type>`.
-- `owner` (String)
+- `owner` (String) Same as `owner_team`, kept for compatibility.
+- `owner_team` (String) Owner team, empty when not owned.
 - `protected` (Boolean)
 - `status` (String)
 - `ttl` (Number) Null for aliases.

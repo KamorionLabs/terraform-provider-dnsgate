@@ -137,12 +137,16 @@ type RRsetBody struct {
 	Alias  *Alias   `json:"alias,omitempty"`
 }
 
-// Condition is the precondition of a write.
+// Condition is the precondition of a write, and the team it is made for.
 type Condition struct {
 	// IfNoneMatch sends If-None-Match: * (create only).
 	IfNoneMatch bool
 	// IfMatch, when set, is the content hash the RRset must still have.
 	IfMatch string
+	// Team, when set, is sent as X-DNS-Gate-Team: the caller acts for this
+	// one of its teams only (created RRsets go to it, and only its RRsets
+	// may be changed). Gates without teams ignore it.
+	Team string
 }
 
 // Me is GET /api/v1/me.
@@ -153,4 +157,80 @@ type Me struct {
 	Roles    []string `json:"roles"`
 	Teams    []string `json:"teams"`
 	Groups   []string `json:"groups"`
+	// DefaultTeam is the team the caller writes for unless it selects
+	// another of its teams. Empty on gates without teams.
+	DefaultTeam string `json:"default_team,omitempty"`
+}
+
+// Team kinds (TeamInfo.Kind).
+const (
+	TeamKindDeclared = "declared"
+	TeamKindAuto     = "auto"
+	TeamKindFamily   = "family"
+	TeamKindClaim    = "claim"
+	TeamKindStore    = "store"
+)
+
+// TeamMembers are the members of a declared team, shown to policy.read
+// holders only.
+type TeamMembers struct {
+	Groups   []string         `json:"groups,omitempty"`
+	Subjects []SubjectMatcher `json:"subjects,omitempty"`
+}
+
+// TeamInfo is one team of GET /api/v1/teams.
+type TeamInfo struct {
+	Name        string       `json:"name"`
+	Kind        string       `json:"kind"`
+	Layer       string       `json:"layer,omitempty"`
+	Description string       `json:"description,omitempty"`
+	Members     *TeamMembers `json:"members,omitempty"`
+	Roles       []string     `json:"roles"`
+	VirtualKeys []string     `json:"virtual_keys,omitempty"`
+	Family      *TeamFrom    `json:"family,omitempty"`
+	Issuer      string       `json:"issuer,omitempty"`
+	Warning     string       `json:"warning,omitempty"`
+}
+
+// TeamList is GET /api/v1/teams. Strict tells whether team references must
+// be declared in the gate policy.
+type TeamList struct {
+	Strict bool       `json:"strict"`
+	Teams  []TeamInfo `json:"teams"`
+}
+
+// TeamZone counts what a team owns in a zone.
+type TeamZone struct {
+	Zone       string `json:"zone"`
+	RRsets     int    `json:"rrsets"`
+	Tombstones int    `json:"tombstones"`
+}
+
+// TransferRRset is one RRset of a transfer request.
+type TransferRRset struct {
+	Host      string `json:"host"`
+	Type      string `json:"type"`
+	Tombstone bool   `json:"tombstone,omitempty"`
+}
+
+// Transfer is an ownership transfer request between teams.
+type Transfer struct {
+	ID        string          `json:"id"`
+	Kind      string          `json:"kind"`
+	Zone      string          `json:"zone,omitempty"`
+	FromTeam  string          `json:"from_team"`
+	ToTeam    string          `json:"to_team"`
+	RRsets    []TransferRRset `json:"rrsets"`
+	Status    string          `json:"status"`
+	Comment   string          `json:"comment"`
+	Requester *Actor          `json:"requester,omitempty"`
+	ExpiresAt *time.Time      `json:"expires_at,omitempty"`
+}
+
+// TeamDetail is GET /api/v1/teams/{team}: the team, what it owns in the
+// zones the caller can read, and its pending transfers.
+type TeamDetail struct {
+	TeamInfo
+	Owned     []TeamZone `json:"owned"`
+	Transfers []Transfer `json:"transfers"`
 }

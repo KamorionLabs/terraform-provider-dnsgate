@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/setvalidator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -32,6 +33,7 @@ var (
 	_ resource.ResourceWithConfigure      = (*recordSetResource)(nil)
 	_ resource.ResourceWithImportState    = (*recordSetResource)(nil)
 	_ resource.ResourceWithValidateConfig = (*recordSetResource)(nil)
+	_ resource.ResourceWithModifyPlan     = (*recordSetResource)(nil)
 )
 
 type recordSetResource struct {
@@ -41,15 +43,17 @@ type recordSetResource struct {
 func newRecordSetResource() resource.Resource { return &recordSetResource{} }
 
 type recordSetModel struct {
-	ID     types.String `tfsdk:"id"`
-	Zone   types.String `tfsdk:"zone"`
-	Name   types.String `tfsdk:"name"`
-	Type   types.String `tfsdk:"type"`
-	TTL    types.Int64  `tfsdk:"ttl"`
-	Values types.Set    `tfsdk:"values"`
-	Alias  *aliasModel  `tfsdk:"alias"`
-	Owner  types.String `tfsdk:"owner"`
-	Status types.String `tfsdk:"status"`
+	ID        types.String `tfsdk:"id"`
+	Zone      types.String `tfsdk:"zone"`
+	Name      types.String `tfsdk:"name"`
+	Type      types.String `tfsdk:"type"`
+	TTL       types.Int64  `tfsdk:"ttl"`
+	Values    types.Set    `tfsdk:"values"`
+	Alias     *aliasModel  `tfsdk:"alias"`
+	Team      types.String `tfsdk:"team"`
+	OwnerTeam types.String `tfsdk:"owner_team"`
+	Owner     types.String `tfsdk:"owner"`
+	Status    types.String `tfsdk:"status"`
 }
 
 type aliasModel struct {
@@ -65,9 +69,9 @@ func (r *recordSetResource) Metadata(_ context.Context, req resource.MetadataReq
 func (r *recordSetResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "All records of one name and type (an RRset) in a zone served by a dns-gate, whatever the DNS " +
-			"provider behind it. The RRset is owned by the team of the provider identity in the gate: the gate refuses " +
-			"changes from other teams and records every change in its audit trail. Creation fails if the RRset already " +
-			"exists: adopt it in the gate, then import it.",
+			"provider behind it. The RRset is owned by a team of the provider identity in the gate (its default team, or " +
+			"`team`): the gate refuses changes from other teams and records every change in its audit trail. Creation " +
+			"fails if the RRset already exists: adopt it in the gate, then import it.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:            true,
@@ -110,9 +114,25 @@ func (r *recordSetResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 				Validators:    []validator.Set{setvalidator.SizeAtLeast(1)},
 				PlanModifiers: []planmodifier.Set{valuesEquivalent{}},
 			},
-			"owner": schema.StringAttribute{
+			"team": schema.StringAttribute{
+				Optional: true,
+				MarkdownDescription: "Team of the provider identity to act for, when it belongs to several teams in the gate. " +
+					"Sent as the `X-DNS-Gate-Team` header on create, update and delete: the RRset is created for this team, and " +
+					"the gate refuses to change it unless this team owns it (`403 not_team_member` when the identity is not a " +
+					"member). Unset, the gate uses the default team of the identity (`default_team` of the `dnsgate_me` data " +
+					"source) and lets it change the RRsets of all its teams. Changing `team` never moves an existing RRset to " +
+					"another team: the plan fails unless the RRset is already owned by the new team (see *Ownership and teams*). " +
+					"Needs a gate with teams, except when it names the first team of the identity.",
+				Validators: []validator.String{stringvalidator.LengthAtLeast(1)},
+			},
+			"owner_team": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Team that owns the RRset in the gate.",
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+			},
+			"owner": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Same as `owner_team`, kept for compatibility.",
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"status": schema.StringAttribute{
@@ -278,8 +298,19 @@ func setHash(ctx context.Context, p privateState, hash string, diags *diag.Diagn
 func (r *recordSetResource) written(ctx context.Context, plan *recordSetModel, want client.RRsetBody, got *client.RRset, diags *diag.Diagnostics) {
 	zone, name, typ := plan.key()
 	plan.ID = types.StringValue(recordSetID(zone, name, typ))
-	plan.Owner = types.StringValue(got.Owner)
+	owner := got.Owner
+	for _, v := range []types.String{plan.OwnerTeam, plan.Owner} {
+		if owner == "" && !v.IsUnknown() {
+			owner = v.ValueString()
+		}
+	}
+	plan.OwnerTeam, plan.Owner = types.StringValue(owner), types.StringValue(owner)
 	plan.Status = types.StringValue(firstNonEmpty(got.Status, client.StatusManaged))
+	if team := plan.Team.ValueString(); team != "" && got.Owner != "" && got.Owner != team {
+		diags.AddError("Record set written for another team",
+			fmt.Sprintf("%s %s in %s is owned by team %q in the gate, not by team %q. The gate did not apply the team selection "+
+				"(X-DNS-Gate-Team): upgrade the gate, or remove team.", name, typ, zone, got.Owner, team))
+	}
 	if !equivalent(typ, want, got) {
 		diags.AddWarning("The gate stored different record data",
 			fmt.Sprintf("%s %s in %s: the gate answered with %s, which the provider does not recognise as the configured content. "+
@@ -301,13 +332,13 @@ func describeContent(rs *client.RRset) string {
 // reconcile handles a 412 answered after a retry: an earlier attempt may
 // have been applied before its answer was lost. The write is a success if
 // the gate now holds the desired content.
-func (r *recordSetResource) reconcile(ctx context.Context, zone, name, typ string, want client.RRsetBody, err error) (*client.RRset, bool) {
+func (r *recordSetResource) reconcile(ctx context.Context, zone, name, typ, team string, want client.RRsetBody, err error) (*client.RRset, bool) {
 	e, ok := client.AsAPIError(err)
 	if !ok || e.Status != http.StatusPreconditionFailed || e.Attempts < 2 {
 		return nil, false
 	}
 	got, gerr := r.pd.client.GetRRset(ctx, zone, name, typ)
-	if gerr != nil || !equivalent(typ, want, got) {
+	if gerr != nil || !equivalent(typ, want, got) || team != "" && got.Owner != "" && got.Owner != team {
 		return nil, false
 	}
 	tflog.Info(ctx, "write refused after a retry, but the gate holds the desired content: an earlier attempt was applied",
@@ -326,10 +357,11 @@ func (r *recordSetResource) Create(ctx context.Context, req resource.CreateReque
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	got, err := r.pd.client.PutRRset(ctx, zone, name, typ, want, client.Condition{IfNoneMatch: true})
+	team := plan.Team.ValueString()
+	got, err := r.pd.client.PutRRset(ctx, zone, name, typ, want, client.Condition{IfNoneMatch: true, Team: team})
 	if err != nil {
 		var ok bool
-		if got, ok = r.reconcile(ctx, zone, name, typ, want, err); !ok {
+		if got, ok = r.reconcile(ctx, zone, name, typ, team, want, err); !ok {
 			r.createError(&resp.Diagnostics, zone, name, typ, err)
 			return
 		}
@@ -388,7 +420,7 @@ func (r *recordSetResource) Read(ctx context.Context, req resource.ReadRequest, 
 func (m *recordSetModel) fromGate(got *client.RRset) {
 	zone, name, typ := m.key()
 	m.ID = types.StringValue(recordSetID(zone, name, typ))
-	m.Owner = types.StringValue(got.Owner)
+	m.OwnerTeam, m.Owner = types.StringValue(got.Owner), types.StringValue(got.Owner)
 	m.Status = types.StringValue(got.Status)
 	if got.Alias != nil {
 		target := got.Alias.Target
@@ -437,16 +469,26 @@ func (r *recordSetResource) Update(ctx context.Context, req resource.UpdateReque
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	var state recordSetModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	zone, name, typ := plan.key()
 	want := plan.body(ctx, &resp.Diagnostics)
 	hash := getHash(ctx, req.Private, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	got, err := r.pd.client.PutRRset(ctx, zone, name, typ, want, client.Condition{IfMatch: hash})
+	if sameContent(&plan, &state) {
+		// Only team changed, to the team that already owns the RRset
+		// (ModifyPlan refuses anything else): nothing to write.
+		plan.ID, plan.OwnerTeam, plan.Owner, plan.Status = state.ID, state.OwnerTeam, state.Owner, state.Status
+		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+		return
+	}
+	team := plan.Team.ValueString()
+	got, err := r.pd.client.PutRRset(ctx, zone, name, typ, want, client.Condition{IfMatch: hash, Team: team})
 	if err != nil {
 		var ok bool
-		if got, ok = r.reconcile(ctx, zone, name, typ, want, err); !ok {
+		if got, ok = r.reconcile(ctx, zone, name, typ, team, want, err); !ok {
 			if client.IsPrecondition(err) {
 				resp.Diagnostics.AddError("Record set changed outside Terraform",
 					fmt.Sprintf("%s %s in %s changed in the gate since Terraform read it. %s", name, typ, zone, reasonHelp[client.ReasonPrecondition]))
@@ -469,7 +511,7 @@ func (r *recordSetResource) Delete(ctx context.Context, req resource.DeleteReque
 		return
 	}
 	zone, name, typ := state.key()
-	err := r.pd.client.DeleteRRset(ctx, zone, name, typ, hash)
+	err := r.pd.client.DeleteRRset(ctx, zone, name, typ, client.Condition{IfMatch: hash, Team: state.Team.ValueString()})
 	if err == nil || client.IsNotFound(err) {
 		return
 	}

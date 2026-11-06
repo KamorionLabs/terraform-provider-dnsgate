@@ -12,7 +12,9 @@ import (
 // reasonHelp explains the gate's refusal reasons.
 var reasonHelp = map[string]string{
 	client.ReasonForbidden:        "The gate policy does not allow this identity to do this (zone, host pattern or record type outside its roles, or a protected record).",
-	client.ReasonNotOwner:         "This RRset is owned by another team in the gate. Only its owner team can modify or delete it.",
+	client.ReasonNotOwner:         "This RRset is owned by another team in the gate (or by another of your teams than the one set in team). Only its owner team can modify or delete it; ownership moves through a transfer request approved in the gate.",
+	client.ReasonNotTeamMember:    "The provider identity is not a member of the team set in team (sent as X-DNS-Gate-Team). The dnsgate_me data source lists its teams.",
+	client.ReasonTeamMismatch:     "The team of the request is not the team of the plan it applies.",
 	client.ReasonForeignRRset:     "This RRset exists in the zone but was not created or adopted through the gate. Adopt it for your team in the gate first (web UI, Zones page, or POST /api/v1/zones/{zone}/adopt), then import it.",
 	client.ReasonTainted:          "This RRset was modified outside the gate (for example in the provider console). Writes are blocked until a gate administrator reviews and re-adopts it.",
 	client.ReasonPrecondition:     "The RRset changed in the gate since Terraform last read it (another run, the web UI or an administrator). Run terraform plan again to see the difference, then apply.",

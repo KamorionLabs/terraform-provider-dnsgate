@@ -22,6 +22,8 @@ const (
 	ReasonPolicyBusy       = "policy_busy"
 	ReasonStoreUnavailable = "store_unavailable"
 	ReasonPlanExpired      = "plan_expired"
+	ReasonNotTeamMember    = "not_team_member"
+	ReasonTeamMismatch     = "team_mismatch"
 )
 
 // ValidationError is one entry of a 400 invalid_policy answer of the
